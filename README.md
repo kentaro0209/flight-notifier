@@ -109,6 +109,16 @@ Google Apps Script をWebhook受け口にすると、LINEで以下のように�
 
 GitHub token は fine-grained token の場合、対象リポジトリを `kentaro0209/flight-notifier` に限定し、Actions の write 権限を付けます。
 
+LINEの **Verify** で `A timeout occurred when sending a webhook event object` が出る場合は、Apps Script のデプロイ設定を確認します:
+
+- 種類: **ウェブアプリ**
+- 次のユーザーとして実行: **自分**
+- アクセスできるユーザー: **全員**
+- LINEに設定するURLは `/exec` で終わるWebアプリURL
+- Apps Scriptを変更した後は **デプロイを管理 → 編集 → 新バージョン** で再デプロイ
+
+WebアプリURLをブラウザで開いて `{"ok":true,...}` のように表示されれば、URL自体は有効です。
+
 手動で編集する場合は、`schedule.csv` を以下の形式にします:
 
 ```csv

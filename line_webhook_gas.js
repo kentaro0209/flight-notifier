@@ -18,10 +18,19 @@ const REPO_NAME = 'flight-notifier';
 const WORKFLOW_FILE = 'add-flight.yml';
 const REF = 'main';
 
+function doGet() {
+  return jsonResponse_({ ok: true, app: 'flight-notifier-line-webhook' });
+}
+
 function doPost(e) {
   const body = e.postData.contents;
   const payload = JSON.parse(body);
-  for (const event of payload.events || []) {
+  const events = payload.events || [];
+  if (events.length === 0) {
+    return jsonResponse_({ ok: true });
+  }
+
+  for (const event of events) {
     if (event.type !== 'message' || event.message.type !== 'text') {
       continue;
     }
