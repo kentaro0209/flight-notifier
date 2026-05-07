@@ -1,0 +1,49 @@
+name: Flight Notifier
+
+on:
+  schedule:
+    # 5分間隔で実行(UTC)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+# 同時実行を防ぐ(状態ファイルの競合回避)
+concurrency:
+  group: flight-notifier
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 状態ファイルのcommitに必要
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run notifier
+        env:
+          AVIATIONSTACK_KEY: ${{ secrets.AVIATIONSTACK_KEY }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: python flight_notifier.py
+
+      - name: Commit state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain flight_state.json)" ]; then
+            git add flight_state.json
+            git commit -m "Update flight state [skip ci]"
+            git push
+          else
+            echo "No state changes"
+          fi
