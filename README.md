@@ -118,6 +118,8 @@ LINEの **Verify** で `A timeout occurred when sending a webhook event object` 
 
 WebアプリURLをブラウザで開いて `{"ok":true,...}` のように表示されれば、URL自体は有効です。WebhookはLINEへ返信せず、GitHub Actions の **Add Flight** を起動します。実行結果は GitHub Actions タブで確認します。
 
+LINEの **Verify** で `302 Found` が出る場合は、Apps Scriptのコードが古い可能性があります。最新版では `ContentService` ではなく `HtmlService` で応答し、LINEに直接200を返すようにしています。`line_webhook_gas.js` を貼り直し、**デプロイを管理 → 編集 → 新バージョン** で再デプロイしてください。
+
 手動で編集する場合は、`schedule.csv` を以下の形式にします:
 
 ```csv

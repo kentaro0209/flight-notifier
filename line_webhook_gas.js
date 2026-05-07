@@ -18,7 +18,7 @@ const WORKFLOW_FILE = 'add-flight.yml';
 const REF = 'main';
 
 function doGet() {
-  return jsonResponse_({ ok: true, app: 'flight-notifier-line-webhook' });
+  return okResponse_({ ok: true, app: 'flight-notifier-line-webhook' });
 }
 
 function doPost(e) {
@@ -26,7 +26,7 @@ function doPost(e) {
   const payload = JSON.parse(body);
   const events = payload.events || [];
   if (events.length === 0) {
-    return jsonResponse_({ ok: true });
+    return okResponse_({ ok: true });
   }
 
   for (const event of events) {
@@ -46,7 +46,7 @@ function doPost(e) {
     }
   }
 
-  return jsonResponse_({ ok: true }, 200);
+  return okResponse_({ ok: true });
 }
 
 function parseFlightMessage_(text) {
@@ -96,8 +96,8 @@ function dispatchAddFlight_(flightIata, flightDate) {
   }
 }
 
-function jsonResponse_(payload, status) {
-  return ContentService
-    .createTextOutput(JSON.stringify(payload))
-    .setMimeType(ContentService.MimeType.JSON);
+function okResponse_(payload) {
+  return HtmlService
+    .createHtmlOutput(JSON.stringify(payload))
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
