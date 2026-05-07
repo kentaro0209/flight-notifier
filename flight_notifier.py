@@ -26,10 +26,12 @@ SCHEDULE_FILE = Path("schedule.csv")
 STATE_FILE = Path("flight_state.json")
 
 # ===== 監視ウィンドウ設定 =====
-# 予定時刻の何分前から監視を開始するか
-PRE_WINDOW_MIN = 30
-# 予定時刻の何分後まで監視を続けるか(これを過ぎても状態が確定しない場合)
-POST_WINDOW_MIN = 180
+# GitHub Actions自体は5分ごとに起動し、API呼び出しは重要時間帯だけに絞る
+MIN_API_INTERVAL_MIN = 10
+DEP_WINDOW_BEFORE_MIN = 45
+DEP_WINDOW_AFTER_MIN = 120
+ARR_WINDOW_BEFORE_MIN = 60
+ARR_WINDOW_AFTER_MIN = 90
 # 大幅遅延とみなす閾値(分)
 SIGNIFICANT_DELAY_MIN = 30
 
@@ -75,17 +77,37 @@ def parse_iso(s: str) -> datetime | None:
         return None
 
 
-def in_monitoring_window(flight: dict, now: datetime) -> bool:
-    """このフライトを今監視すべきかどうか判定"""
+def in_active_window(flight: dict, now: datetime) -> bool:
+    """出発・到着の周辺など、APIを叩く価値が高い時間帯か判定"""
     sched_dep = parse_iso(flight.get("scheduled_departure", ""))
     sched_arr = parse_iso(flight.get("scheduled_arrival", ""))
     if not sched_dep:
         return False
 
-    # 出発予定の30分前から、到着予定の3時間後まで
-    start = sched_dep - timedelta(minutes=PRE_WINDOW_MIN)
-    end = (sched_arr or sched_dep) + timedelta(minutes=POST_WINDOW_MIN)
-    return start <= now <= end
+    dep_start = sched_dep - timedelta(minutes=DEP_WINDOW_BEFORE_MIN)
+    dep_end = sched_dep + timedelta(minutes=DEP_WINDOW_AFTER_MIN)
+    if dep_start <= now <= dep_end:
+        return True
+
+    if sched_arr:
+        arr_start = sched_arr - timedelta(minutes=ARR_WINDOW_BEFORE_MIN)
+        arr_end = sched_arr + timedelta(minutes=ARR_WINDOW_AFTER_MIN)
+        if arr_start <= now <= arr_end:
+            return True
+
+    return False
+
+
+def should_poll_api(flight: dict, prev: dict, now: datetime) -> bool:
+    """無料枠を守るため、重要時間帯かつ前回API呼び出しから十分空いた時だけ取得"""
+    if not in_active_window(flight, now):
+        return False
+
+    last_api_check = parse_iso(prev.get("last_api_check", ""))
+    if not last_api_check:
+        return True
+
+    return now - last_api_check >= timedelta(minutes=MIN_API_INTERVAL_MIN)
 
 
 def fetch_flight(flight_iata: str, flight_date: str) -> dict | None:
@@ -197,14 +219,15 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
     flight_date = flight.get("flight_date", "")
     key = f"{flight_iata}_{flight_date}"
 
-    # 監視ウィンドウ外ならスキップ
-    if not in_monitoring_window(flight, now):
-        return
-
     # 既に最終状態(landed/cancelled)に到達済みならスキップ
     prev = state.get(key, {})
     if prev.get("finalized"):
         print(f"[SKIP] {key}: 確定済み")
+        return
+
+    # API無料枠節約のため、出発・到着の周辺だけ監視する
+    if not should_poll_api(flight, prev, now):
+        print(f"[SKIP] {key}: API呼び出し対象外")
         return
 
     info = fetch_flight(flight_iata, flight_date)
@@ -225,8 +248,8 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
         notified.append("cancelled")
         prev["finalized"] = True
 
-    # 2. 出発通知(scheduled -> active)
-    if old_status == "scheduled" and new_status == "active" and "departed" not in notified:
+    # 2. 出発通知(activeを初検知した場合も通知)
+    if new_status == "active" and old_status != "active" and "departed" not in notified:
         send_line(build_message("🛫 出発しました", flight_iata, info))
         notified.append("departed")
 
@@ -249,6 +272,7 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
     # 状態を保存
     prev["status"] = new_status
     prev["notified"] = notified
+    prev["last_api_check"] = now.isoformat()
     prev["last_check"] = now.isoformat()
     state[key] = prev
 
