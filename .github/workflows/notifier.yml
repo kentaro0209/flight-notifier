@@ -2,8 +2,8 @@ name: Flight Notifier
 
 on:
   schedule:
-    # 5分間隔で実行(UTC)
-    - cron: '*/5 * * * *'
+    # 30分間隔で実行(UTC)。AviationStack無料枠(100 requests/month)向け
+    - cron: '*/30 * * * *'
   workflow_dispatch:  # 手動実行も可能
 
 # 同時実行を防ぐ(状態ファイルの競合回避)
