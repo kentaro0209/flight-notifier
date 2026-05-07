@@ -31,7 +31,7 @@ jobs:
 
       - name: Run notifier
         env:
-          AVIATIONSTACK_KEY: ${{ secrets.AVIATIONSTACK_KEY }}
+          AERODATABOX_RAPIDAPI_KEY: ${{ secrets.AERODATABOX_RAPIDAPI_KEY }}
           LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
         run: python flight_notifier.py

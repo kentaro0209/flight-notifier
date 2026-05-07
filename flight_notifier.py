@@ -1,6 +1,6 @@
 """
 妻のフライト出発・到着通知スクリプト
-- AviationStack APIでフライト状態を取得
+- AeroDataBox APIでフライト状態を取得
 - LINE Messaging APIで通知
 - GitHub Actionsで5分間隔実行
 - スケジュールCSVを読み込み、対象期間内のフライトのみ監視
@@ -17,7 +17,8 @@ from pathlib import Path
 import requests
 
 # ===== 環境変数(GitHub Secretsから注入) =====
-AVIATIONSTACK_KEY = os.environ["AVIATIONSTACK_KEY"]
+AERODATABOX_API_KEY = os.environ["AERODATABOX_RAPIDAPI_KEY"]
+AERODATABOX_HOST = os.environ.get("AERODATABOX_RAPIDAPI_HOST", "aerodatabox.p.rapidapi.com")
 LINE_CHANNEL_TOKEN = os.environ["LINE_CHANNEL_TOKEN"]
 LINE_USER_ID = os.environ["LINE_USER_ID"]
 
@@ -110,29 +111,95 @@ def should_poll_api(flight: dict, prev: dict, now: datetime) -> bool:
     return now - last_api_check >= timedelta(minutes=MIN_API_INTERVAL_MIN)
 
 
+def datetime_value(value: dict | str | None) -> str:
+    """AeroDataBoxのDateTimeContractからISO文字列を取り出す"""
+    if isinstance(value, dict):
+        return value.get("utc") or value.get("local") or ""
+    return value or ""
+
+
+def airport_value(airport: dict) -> dict:
+    """AeroDataBoxの空港情報を既存メッセージ形式へ寄せる"""
+    return {
+        "airport": airport.get("name") or "?",
+        "iata": airport.get("iata") or airport.get("icao") or "?",
+    }
+
+
+def normalize_status(status: str) -> str:
+    """AeroDataBoxのstatusを既存状態名へ正規化"""
+    status_map = {
+        "Expected": "scheduled",
+        "CheckIn": "scheduled",
+        "Boarding": "scheduled",
+        "GateClosed": "scheduled",
+        "Delayed": "scheduled",
+        "EnRoute": "active",
+        "Departed": "active",
+        "Approaching": "active",
+        "Arrived": "landed",
+        "Canceled": "cancelled",
+        "Cancelled": "cancelled",
+        "CanceledUncertain": "cancelled",
+        "CancelledUncertain": "cancelled",
+        "Diverted": "cancelled",
+    }
+    return status_map.get(status, "unknown")
+
+
+def normalize_flight(raw: dict) -> dict:
+    """AeroDataBoxレスポンスを既存ロジックが扱える形へ変換"""
+    dep = raw.get("departure") or {}
+    arr = raw.get("arrival") or {}
+
+    return {
+        "flight_status": normalize_status(raw.get("status", "")),
+        "source_status": raw.get("status", ""),
+        "airline": raw.get("airline") or {},
+        "departure": {
+            **airport_value(dep.get("airport") or {}),
+            "scheduled": datetime_value(dep.get("scheduledTime")),
+            "estimated": datetime_value(dep.get("revisedTime") or dep.get("predictedTime")),
+            "actual": datetime_value(dep.get("runwayTime")) if raw.get("status") in {"Departed", "EnRoute", "Arrived"} else "",
+        },
+        "arrival": {
+            **airport_value(arr.get("airport") or {}),
+            "scheduled": datetime_value(arr.get("scheduledTime")),
+            "estimated": datetime_value(arr.get("revisedTime") or arr.get("predictedTime")),
+            "actual": datetime_value(arr.get("runwayTime")) if raw.get("status") == "Arrived" else "",
+        },
+    }
+
+
 def fetch_flight(flight_iata: str, flight_date: str) -> dict | None:
-    """AviationStackからフライト情報を取得"""
-    url = "https://api.aviationstack.com/v1/flights"
+    """AeroDataBoxからフライト情報を取得"""
+    url = f"https://{AERODATABOX_HOST}/flights/number/{flight_iata}/{flight_date}"
+    headers = {
+        "X-RapidAPI-Key": AERODATABOX_API_KEY,
+        "X-RapidAPI-Host": AERODATABOX_HOST,
+        "Accept": "application/json",
+    }
     params = {
-        "access_key": AVIATIONSTACK_KEY,
-        "flight_iata": flight_iata,
-        "flight_date": flight_date,
-        "limit": 1,
+        "dateLocalRole": "Departure",
+        "withAircraftImage": "false",
+        "withLocation": "false",
+        "withFlightPlan": "false",
     }
     try:
-        r = requests.get(url, params=params, timeout=20)
+        r = requests.get(url, headers=headers, params=params, timeout=20)
+        if r.status_code == 204:
+            print(f"[WARN] {flight_iata}: データなし", file=sys.stderr)
+            return None
         r.raise_for_status()
         data = r.json()
     except Exception as e:
         print(f"[WARN] {flight_iata}: API取得失敗 {e}", file=sys.stderr)
         return None
 
-    if "error" in data:
-        print(f"[WARN] {flight_iata}: APIエラー {data['error']}", file=sys.stderr)
+    if not isinstance(data, list) or not data:
         return None
 
-    results = data.get("data") or []
-    return results[0] if results else None
+    return normalize_flight(data[0])
 
 
 def send_line(text: str) -> None:

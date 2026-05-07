@@ -1,20 +1,23 @@
 # 妻のフライト出発・到着通知システム
 
-GitHub Actionsを5分おきに起動しつつ、AviationStack APIは出発・到着の周辺だけに絞って監視します。出発・到着・大幅遅延・欠航時にLINEへ通知します。
+GitHub Actionsを5分おきに起動しつつ、AeroDataBox APIは出発・到着の周辺だけに絞って監視します。出発・到着・大幅遅延・欠航時にLINEへ通知します。
 
 ## 構成
 
-- **データ取得**: AviationStack API (無料枠 月100リクエスト)
+- **データ取得**: AeroDataBox API (RapidAPI経由の無料枠あり)
 - **通知**: LINE Messaging API (無料枠 月200通)
 - **実行基盤**: GitHub Actions (パブリックリポジトリなら無制限)
 - **状態管理**: `flight_state.json` をリポジトリに自動コミット
 
 ## セットアップ手順
 
-### 1. AviationStack APIキーを取得
+### 1. AeroDataBox APIキーを取得
 
-1. <https://aviationstack.com/signup/free> でサインアップ
-2. ダッシュボードから API Access Key をコピー
+1. <https://rapid.aerodatabox.com/> から RapidAPI の AeroDataBox ページを開く
+2. RapidAPI にログイン、またはアカウント作成
+3. AeroDataBox API の無料プランに Subscribe
+4. RapidAPI のエンドポイント画面で **X-RapidAPI-Key** をコピー
+   → これが `AERODATABOX_RAPIDAPI_KEY`
 
 ### 2. LINE Messaging API を準備
 
@@ -56,7 +59,7 @@ GitHub Actionsを5分おきに起動しつつ、AviationStack APIは出発・到
 
 | Name | Value |
 |------|-------|
-| `AVIATIONSTACK_KEY` | AviationStackのAPIキー |
+| `AERODATABOX_RAPIDAPI_KEY` | RapidAPIのAeroDataBox用 `X-RapidAPI-Key` |
 | `LINE_CHANNEL_TOKEN` | LINEのChannel access token |
 | `LINE_USER_ID` | LINEのユーザーID(`U`から始まる文字列) |
 
@@ -103,7 +106,7 @@ JL005,2026-05-15,2026-05-15T11:00:00-04:00,2026-05-16T15:30:00+09:00,JFK-NRT
 
 ## API使用量の目安
 
-現在の無料枠(月100リクエスト)で運用する場合の目安:
+RapidAPI経由のAeroDataBox無料枠で運用する場合の目安:
 
 - GitHub Actions: 5分間隔で起動
 - API呼び出し: 同じ便は10分以上あけて実行
@@ -112,12 +115,12 @@ JL005,2026-05-15,2026-05-15T11:00:00-04:00,2026-05-16T15:30:00+09:00,JFK-NRT
 - **長距離便1便あたり約25〜35リクエスト**
 - **月2〜3便程度** が無料枠内の現実的な目安です
 
-巡航中はAPIを叩かないため、5分間隔で起動しても長距離便の全時間を監視し続けるより大幅に節約できます。頻繁に使う場合は AviationStack の有料プラン、または監視対象便を必要な月だけ登録する運用を検討してください。
+巡航中はAPIを叩かないため、5分間隔で起動しても長距離便の全時間を監視し続けるより大幅に節約できます。頻繁に使う場合は AeroDataBox の有料プラン、または監視対象便を必要な月だけ登録する運用を検討してください。
 
 ## トラブルシューティング
 
 - **通知が来ない**: Actions タブでログを確認。`schedule.csv` の時刻フォーマット、Secrets の値を再確認
-- **「データなし」が続く**: フライトが運航前か、AviationStackのDBに存在しない便。`flight_date` が出発地のローカル日付になっているか確認
+- **「データなし」が続く**: フライトが運航前か、AeroDataBoxのDBに存在しない便。`flight_date` が出発地のローカル日付になっているか確認
 - **API使用量を節約したい**: `flight_notifier.py` の `MIN_API_INTERVAL_MIN` を大きくする、または監視ウィンドウを短くする
 - **状態ファイルが肥大化**: `cleanup_old_state` が7日以上前のものを自動削除します
 
@@ -125,6 +128,6 @@ JL005,2026-05-15,2026-05-15T11:00:00-04:00,2026-05-16T15:30:00+09:00,JFK-NRT
 
 - 「出発」= 離陸検知(プッシュバックではない)
 - 「到着」= 着陸検知(ゲート到着ではない)
-- AviationStackは状態更新が30〜60秒程度遅延します
+- AeroDataBoxの状態更新はデータソースの都合で遅延することがあります
 - GitHub Actions の cron は負荷状況により数分ずれることがあります
 - API呼び出しは10分以上あけるため、通知の遅延は **10〜15分程度** が目安です
