@@ -99,7 +99,6 @@ Google Apps Script をWebhook受け口にすると、LINEで以下のように�
 | Name | Value |
 |------|-------|
 | `GITHUB_TOKEN` | GitHub workflow を起動できる Personal access token |
-| `LINE_CHANNEL_ACCESS_TOKEN` | `LINE_CHANNEL_TOKEN` と同じLINEのChannel access token |
 
 4. **デプロイ → 新しいデプロイ → ウェブアプリ** を選択
 5. 実行ユーザーは **自分**、アクセスできるユーザーは **全員** にしてデプロイ
@@ -117,7 +116,7 @@ LINEの **Verify** で `A timeout occurred when sending a webhook event object` 
 - LINEに設定するURLは `/exec` で終わるWebアプリURL
 - Apps Scriptを変更した後は **デプロイを管理 → 編集 → 新バージョン** で再デプロイ
 
-WebアプリURLをブラウザで開いて `{"ok":true,...}` のように表示されれば、URL自体は有効です。
+WebアプリURLをブラウザで開いて `{"ok":true,...}` のように表示されれば、URL自体は有効です。WebhookはLINEへ返信せず、GitHub Actions の **Add Flight** を起動します。実行結果は GitHub Actions タブで確認します。
 
 手動で編集する場合は、`schedule.csv` を以下の形式にします:
 
