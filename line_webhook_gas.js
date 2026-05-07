@@ -24,6 +24,7 @@ function doGet() {
 
 function doPost(e) {
   const body = e.postData.contents;
+  console.log(body);
   const payload = JSON.parse(body);
   const events = payload.events || [];
   if (events.length === 0) {
@@ -106,10 +107,11 @@ function dispatchAddFlight_(flightIata, flightDate) {
 function replyLine_(replyToken, text) {
   const token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
   if (!token || !replyToken) {
+    console.log(`skip reply: token=${Boolean(token)} replyToken=${Boolean(replyToken)}`);
     return;
   }
 
-  UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
+  const response = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'post',
     contentType: 'application/json',
     headers: {
@@ -121,6 +123,7 @@ function replyLine_(replyToken, text) {
     }),
     muteHttpExceptions: true,
   });
+  console.log(`LINE reply: ${response.getResponseCode()} ${response.getContentText()}`);
 }
 
 function okResponse_(payload) {
