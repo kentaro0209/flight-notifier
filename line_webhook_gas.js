@@ -6,6 +6,7 @@
  *
  * Script properties required:
  * - GITHUB_TOKEN: GitHub token that can dispatch workflows
+ * - LINE_CHANNEL_ACCESS_TOKEN: LINE Messaging API channel access token
  *
  * LINE message format:
  *   追加 JL006 2026-05-10
@@ -36,13 +37,19 @@ function doPost(e) {
 
     const parsed = parseFlightMessage_(event.message.text);
     if (!parsed) {
+      replyLine_(event.replyToken, '登録形式: 追加 JL006 2026-05-10');
       continue;
     }
 
     try {
       dispatchAddFlight_(parsed.flight_iata, parsed.flight_date);
+      replyLine_(
+        event.replyToken,
+        `登録を開始しました\n便名: ${parsed.flight_iata}\n日付: ${parsed.flight_date}`
+      );
     } catch (error) {
       console.error(error);
+      replyLine_(event.replyToken, `登録に失敗しました\n${error.message}`);
     }
   }
 
@@ -94,6 +101,26 @@ function dispatchAddFlight_(flightIata, flightDate) {
   if (status < 200 || status >= 300) {
     throw new Error(`GitHub API ${status}: ${response.getContentText()}`);
   }
+}
+
+function replyLine_(replyToken, text) {
+  const token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
+  if (!token || !replyToken) {
+    return;
+  }
+
+  UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    payload: JSON.stringify({
+      replyToken,
+      messages: [{ type: 'text', text }],
+    }),
+    muteHttpExceptions: true,
+  });
 }
 
 function okResponse_(payload) {

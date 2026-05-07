@@ -99,6 +99,7 @@ Google Apps Script をWebhook受け口にすると、LINEで以下のように�
 | Name | Value |
 |------|-------|
 | `GITHUB_TOKEN` | GitHub workflow を起動できる Personal access token |
+| `LINE_CHANNEL_ACCESS_TOKEN` | `LINE_CHANNEL_TOKEN` と同じLINEのChannel access token |
 
 4. **デプロイ → 新しいデプロイ → ウェブアプリ** を選択
 5. 実行ユーザーは **自分**、アクセスできるユーザーは **全員** にしてデプロイ
