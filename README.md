@@ -73,7 +73,16 @@ GitHub Actionsを5分おきに起動しつつ、AeroDataBox APIは出発・到�
 
 ### 6. スケジュール登録
 
-`schedule.csv` を編集して、奥様のフライト予定を入れます:
+リポジトリの **Actions** タブから **Add Flight** を選び、**Run workflow** で以下を入力します:
+
+| 入力 | 例 | 説明 |
+|------|-----|------|
+| `flight_iata` | `JL006` | 便名(IATAコード) |
+| `flight_date` | `2026-05-10` | 運航日(出発地のローカル日付・YYYY-MM-DD) |
+
+実行すると AeroDataBox から出発予定時刻・到着予定時刻・区間を取得し、`schedule.csv` に自動で追記します。同じ便名・日付が既にある場合は更新します。
+
+手動で編集する場合は、`schedule.csv` を以下の形式にします:
 
 ```csv
 flight_iata,flight_date,scheduled_departure,scheduled_arrival,note
