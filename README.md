@@ -82,6 +82,33 @@ GitHub Actionsを5分おきに起動しつつ、AeroDataBox APIは出発・到�
 
 実行すると AeroDataBox から出発予定時刻・到着予定時刻・区間を取得し、`schedule.csv` に自動で追記します。同じ便名・日付が既にある場合は更新します。
 
+#### LINEから登録する場合
+
+Google Apps Script をWebhook受け口にすると、LINEで以下のように送るだけで登録できます:
+
+```text
+追加 JL006 2026-05-10
+```
+
+手順:
+
+1. <https://script.google.com/> で新しい Apps Script を作成
+2. このリポジトリの `line_webhook_gas.js` の内容を貼り付け
+3. Apps Script の **プロジェクトの設定 → スクリプト プロパティ** に以下を登録
+
+| Name | Value |
+|------|-------|
+| `GITHUB_TOKEN` | GitHub workflow を起動できる Personal access token |
+| `LINE_CHANNEL_ACCESS_TOKEN` | `LINE_CHANNEL_TOKEN` と同じLINEのChannel access token |
+
+4. **デプロイ → 新しいデプロイ → ウェブアプリ** を選択
+5. 実行ユーザーは **自分**、アクセスできるユーザーは **全員** にしてデプロイ
+6. 発行されたWebアプリURLを LINE Developers Console の **Messaging API → Webhook URL** に設定
+7. **Use webhook** を ON にする
+8. LINEでBotに `追加 JL006 2026-05-10` のように送信
+
+GitHub token は fine-grained token の場合、対象リポジトリを `kentaro0209/flight-notifier` に限定し、Actions の write 権限を付けます。
+
 手動で編集する場合は、`schedule.csv` を以下の形式にします:
 
 ```csv
