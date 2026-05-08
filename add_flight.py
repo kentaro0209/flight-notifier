@@ -15,6 +15,8 @@ import requests
 
 AERODATABOX_API_KEY = os.environ["AERODATABOX_RAPIDAPI_KEY"]
 AERODATABOX_HOST = os.environ.get("AERODATABOX_RAPIDAPI_HOST", "aerodatabox.p.rapidapi.com")
+LINE_CHANNEL_TOKEN = os.environ.get("LINE_CHANNEL_TOKEN", "")
+LINE_USER_ID = os.environ.get("LINE_USER_ID", "")
 SCHEDULE_FILE = Path("schedule.csv")
 FIELDNAMES = [
     "flight_iata",
@@ -58,6 +60,26 @@ def fetch_flight(flight_iata: str, flight_date: str) -> dict:
     if not isinstance(data, list) or not data:
         raise RuntimeError(f"{flight_iata} {flight_date}: flight data not found")
     return data[0]
+
+
+def send_line(text: str) -> None:
+    if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
+        return
+
+    response = requests.post(
+        "https://api.line.me/v2/bot/message/push",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {LINE_CHANNEL_TOKEN}",
+        },
+        json={
+            "to": LINE_USER_ID,
+            "messages": [{"type": "text", "text": text}],
+        },
+        timeout=20,
+    )
+    if response.status_code != 200:
+        print(f"[WARN] LINE送信失敗: {response.status_code} {response.text}", file=sys.stderr)
 
 
 def load_rows() -> list[dict]:
@@ -134,6 +156,12 @@ def main() -> None:
     print(f"{action}: {new_row['flight_iata']} {new_row['flight_date']} {new_row['note']}")
     print(f"departure: {new_row['scheduled_departure']}")
     print(f"arrival: {new_row['scheduled_arrival'] or '?'}")
+    send_line(
+        "フライト予定を登録しました\n"
+        f"便名: {new_row['flight_iata']}\n"
+        f"日付: {new_row['flight_date']}\n"
+        f"区間: {new_row['note'] or '?'}"
+    )
 
 
 if __name__ == "__main__":
@@ -141,4 +169,5 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"[ERROR] {e}", file=sys.stderr)
+        send_line(f"フライト予定の登録に失敗しました\n{e}")
         raise SystemExit(1)

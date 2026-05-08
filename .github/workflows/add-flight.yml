@@ -15,6 +15,8 @@ on:
 jobs:
   add:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
       contents: write
 
@@ -33,6 +35,8 @@ jobs:
       - name: Add flight to schedule
         env:
           AERODATABOX_RAPIDAPI_KEY: ${{ secrets.AERODATABOX_RAPIDAPI_KEY }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           FLIGHT_IATA: ${{ inputs.flight_iata }}
           FLIGHT_DATE: ${{ inputs.flight_date }}
         run: python add_flight.py
