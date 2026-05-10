@@ -190,7 +190,14 @@ def fetch_flight(flight_iata: str, flight_date: str) -> dict | None:
         if r.status_code == 204:
             print(f"[WARN] {flight_iata}: データなし", file=sys.stderr)
             return None
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            print(
+                f"[WARN] {flight_iata}: APIエラー {r.status_code} {r.text or e}",
+                file=sys.stderr,
+            )
+            return None
         data = r.json()
     except Exception as e:
         print(f"[WARN] {flight_iata}: API取得失敗 {e}", file=sys.stderr)

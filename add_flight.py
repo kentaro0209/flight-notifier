@@ -54,7 +54,12 @@ def fetch_flight(flight_iata: str, flight_date: str) -> dict:
     response = requests.get(url, headers=headers, params=params, timeout=20)
     if response.status_code == 204:
         raise RuntimeError(f"{flight_iata} {flight_date}: flight data not found")
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as e:
+        raise RuntimeError(
+            f"AeroDataBox API {response.status_code}: {response.text or e}"
+        ) from e
 
     data = response.json()
     if not isinstance(data, list) or not data:

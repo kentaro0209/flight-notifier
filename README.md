@@ -169,6 +169,7 @@ RapidAPI経由のAeroDataBox無料枠で運用する場合の目安:
 
 - **通知が来ない**: Actions タブでログを確認。`schedule.csv` の時刻フォーマット、Secrets の値を再確認
 - **「データなし」が続く**: フライトが運航前か、AeroDataBoxのDBに存在しない便。`flight_date` が出発地のローカル日付になっているか確認
+- **AeroDataBox API 403**: RapidAPIでAeroDataBox APIにSubscribe済みか、`AERODATABOX_RAPIDAPI_KEY` がそのAPI用のキーか、API Units/Requests上限に達していないか確認
 - **API使用量を節約したい**: `flight_notifier.py` の `MIN_API_INTERVAL_MIN` を大きくする、または監視ウィンドウを短くする
 - **状態ファイルが肥大化**: `cleanup_old_state` が7日以上前のものを自動削除します
 
