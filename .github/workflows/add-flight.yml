@@ -11,6 +11,18 @@ on:
         description: '出発地の現地日付。例: 2026-05-20'
         required: true
         type: string
+      scheduled_departure:
+        description: '任意。出発予定 HH:MM。例: 10:30'
+        required: false
+        type: string
+      scheduled_arrival:
+        description: '任意。到着予定 HH:MM。例: 12:00'
+        required: false
+        type: string
+      note:
+        description: '任意。例: 羽田→女満別'
+        required: false
+        type: string
 
 jobs:
   add:
@@ -39,6 +51,9 @@ jobs:
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           FLIGHT_NUMBER: ${{ inputs.flight_number }}
           FLIGHT_DATE: ${{ inputs.flight_date }}
+          SCHEDULED_DEPARTURE: ${{ inputs.scheduled_departure }}
+          SCHEDULED_ARRIVAL: ${{ inputs.scheduled_arrival }}
+          FLIGHT_NOTE: ${{ inputs.note }}
         run: python add_flight.py
 
       - name: Commit schedule

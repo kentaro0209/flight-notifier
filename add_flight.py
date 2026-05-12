@@ -46,6 +46,18 @@ def parse_odpt_time(value: str | None, date: str) -> str:
     return datetime.fromisoformat(f"{date}T{value}:00+09:00").isoformat()
 
 
+def parse_manual_time(value: str, date: str) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    if re.fullmatch(r"\d{2}:\d{2}", value):
+        return datetime.fromisoformat(f"{date}T{value}:00+09:00").isoformat()
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
+    except ValueError as e:
+        raise RuntimeError(f"時刻の形式が正しくありません: {value}") from e
+
+
 def compact_airport(value: str) -> str:
     return value.replace("odpt.Airport:", "") if value else "?"
 
@@ -123,6 +135,28 @@ def build_row(flight_number: str, flight_date: str, dep_info: dict, arr_info: di
     }
 
 
+def build_manual_row(
+    flight_number: str,
+    flight_date: str,
+    scheduled_departure: str,
+    scheduled_arrival: str,
+    note: str,
+) -> dict:
+    departure = parse_manual_time(scheduled_departure, flight_date)
+    if not departure:
+        raise RuntimeError(
+            "ODPTに未掲載の便です。未来便は時刻つきで送ってください: "
+            "追加 JL567 2026-05-20 10:30 12:00 羽田→女満別"
+        )
+    return {
+        "flight_number": flight_number,
+        "flight_date": flight_date,
+        "scheduled_departure": departure,
+        "scheduled_arrival": parse_manual_time(scheduled_arrival, flight_date),
+        "note": note,
+    }
+
+
 def upsert_row(rows: list[dict], new_row: dict) -> tuple[list[dict], str]:
     key = (new_row["flight_number"], new_row["flight_date"])
     result = []
@@ -142,16 +176,27 @@ def upsert_row(rows: list[dict], new_row: dict) -> tuple[list[dict], str]:
 def main() -> None:
     flight_number = normalize_input_flight_number(os.environ.get("FLIGHT_NUMBER", ""))
     flight_date = os.environ.get("FLIGHT_DATE", "").strip()
+    manual_departure = os.environ.get("SCHEDULED_DEPARTURE", "").strip()
+    manual_arrival = os.environ.get("SCHEDULED_ARRIVAL", "").strip()
+    manual_note = os.environ.get("FLIGHT_NOTE", "").strip()
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", flight_date):
         raise RuntimeError(f"日付の形式が正しくありません: {flight_date}")
 
     odpt_flight_number = normalize_odpt_flight_number(flight_number)
     dep_info = fetch_odpt("Departure", odpt_flight_number)
     arr_info = fetch_odpt("Arrival", odpt_flight_number)
-    if not dep_info:
-        raise RuntimeError(f"{flight_number} の出発情報がODPTに見つかりませんでした")
-
-    row = build_row(flight_number, flight_date, dep_info, arr_info)
+    if dep_info:
+        row = build_row(flight_number, flight_date, dep_info, arr_info)
+        if manual_note:
+            row["note"] = manual_note
+    else:
+        row = build_manual_row(
+            flight_number,
+            flight_date,
+            manual_departure,
+            manual_arrival,
+            manual_note,
+        )
     rows, action = upsert_row(load_rows(), row)
     save_rows(rows)
 

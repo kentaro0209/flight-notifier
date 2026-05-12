@@ -7,6 +7,7 @@
  *
  * LINE message format:
  *   追加 JL567 2026-05-20
+ *   追加 JL567 2026-05-20 10:30 12:00 羽田→女満別
  *   JL567 2026-05-20
  *   一覧
  */
@@ -45,7 +46,7 @@ function doPost(e) {
 
     const parsed = parseFlightMessage_(text);
     if (!parsed) {
-      replyLine_(event.replyToken, '登録形式: 追加 JL567 2026-05-20\n一覧確認: 一覧');
+      replyLine_(event.replyToken, '登録形式: 追加 JL567 2026-05-20\n未来便: 追加 JL567 2026-05-20 10:30 12:00 羽田→女満別\n一覧確認: 一覧');
       continue;
     }
 
@@ -53,6 +54,9 @@ function doPost(e) {
       dispatchWorkflow_(ADD_WORKFLOW_FILE, {
         flight_number: parsed.flight_number,
         flight_date: parsed.flight_date,
+        scheduled_departure: parsed.scheduled_departure,
+        scheduled_arrival: parsed.scheduled_arrival,
+        note: parsed.note,
       });
       replyLine_(
         event.replyToken,
@@ -87,6 +91,9 @@ function parseFlightMessage_(text) {
   return {
     flight_number: flight.replace(/^JL0*(\d+)$/, 'JL$1'),
     flight_date: date,
+    scheduled_departure: values[2] || '',
+    scheduled_arrival: values[3] || '',
+    note: values.slice(4).join(' '),
   };
 }
 
