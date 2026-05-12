@@ -1,10 +1,12 @@
 """
-妻のフライト出発・到着通知スクリプト
-- AeroDataBox APIでフライト状態を取得
-- LINE Messaging APIで通知
-- GitHub Actionsで5分間隔実行
-- スケジュールCSVを読み込み、対象期間内のフライトのみ監視
-- 状態確定後は監視を停止してAPI使用量を抑える
+JALフライト出発・到着通知スクリプト (ODPT API版)
+
+データソース: 公共交通オープンデータセンター (ODPT)
+  - JAL公式のリアルタイム出発/到着情報(国内線・国際線)
+  - 完全無料・リクエスト制限なし
+
+通知: LINE Messaging API
+実行: GitHub Actions (5分間隔)
 """
 
 import csv
@@ -17,43 +19,52 @@ from pathlib import Path
 import requests
 
 # ===== 環境変数(GitHub Secretsから注入) =====
-AERODATABOX_API_KEY = os.environ["AERODATABOX_RAPIDAPI_KEY"]
-AERODATABOX_HOST = os.environ.get("AERODATABOX_RAPIDAPI_HOST", "aerodatabox.p.rapidapi.com")
+ODPT_TOKEN = os.environ["ODPT_TOKEN"]
 LINE_CHANNEL_TOKEN = os.environ["LINE_CHANNEL_TOKEN"]
 LINE_USER_ID = os.environ["LINE_USER_ID"]
 
-# ===== ファイルパス =====
+# ===== 定数 =====
+JST = timezone(timedelta(hours=9))
+ODPT_BASE = "https://api.odpt.org/api/v4"
+
 SCHEDULE_FILE = Path("schedule.csv")
 STATE_FILE = Path("flight_state.json")
 
-# ===== 監視ウィンドウ設定 =====
-# GitHub Actions自体は5分ごとに起動し、API呼び出しは重要時間帯だけに絞る
-MIN_API_INTERVAL_MIN = 10
-DEP_WINDOW_BEFORE_MIN = 45
-DEP_WINDOW_AFTER_MIN = 120
-ARR_WINDOW_BEFORE_MIN = 60
-ARR_WINDOW_AFTER_MIN = 90
+# 監視ウィンドウ: 出発予定の何分前から / 到着予定の何分後まで
+PRE_WINDOW_MIN = 30
+POST_WINDOW_MIN = 180
 # 大幅遅延とみなす閾値(分)
 SIGNIFICANT_DELAY_MIN = 30
 
+# ODPT flightStatus の日本語マッピング
+STATUS_MAP = {
+    "odpt.FlightStatus:OnTime": "定刻",
+    "odpt.FlightStatus:Delayed": "遅延",
+    "odpt.FlightStatus:Cancelled": "欠航",
+    "odpt.FlightStatus:Diverted": "目的地変更",
+    "odpt.FlightStatus:ReturnedToGate": "ゲート戻り",
+    "odpt.FlightStatus:Departed": "出発済",
+    "odpt.FlightStatus:Arrived": "到着済",
+    "odpt.FlightStatus:Landing": "着陸中",
+    "odpt.FlightStatus:TurnedBack": "引き返し",
+}
 
+
+# ===== スケジュール管理 =====
 def load_schedule() -> list[dict]:
-    """schedule.csvを読み込む"""
     if not SCHEDULE_FILE.exists():
         print(f"[ERROR] {SCHEDULE_FILE} が見つかりません", file=sys.stderr)
         return []
-
     flights = []
     with SCHEDULE_FILE.open(encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
+        for row in csv.DictReader(f):
             row = {k.strip(): v.strip() for k, v in row.items() if k}
-            if not row.get("flight_iata"):
-                continue
-            flights.append(row)
+            if row.get("flight_number"):
+                flights.append(row)
     return flights
 
 
+# ===== 状態管理 =====
 def load_state() -> dict:
     if STATE_FILE.exists():
         return json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -61,156 +72,95 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    STATE_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def parse_iso(s: str) -> datetime | None:
-    """ISO8601文字列をdatetimeに変換(タイムゾーン付き)"""
+# ===== 時刻ユーティリティ =====
+def parse_schedule_time(s: str) -> datetime | None:
+    """schedule.csvのISO8601時刻をdatetimeに"""
     if not s:
         return None
     try:
-        # AviationStackは "2026-05-07T10:30:00+00:00" 形式
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         return None
 
 
-def in_active_window(flight: dict, now: datetime) -> bool:
-    """出発・到着の周辺など、APIを叩く価値が高い時間帯か判定"""
-    sched_dep = parse_iso(flight.get("scheduled_departure", ""))
-    sched_arr = parse_iso(flight.get("scheduled_arrival", ""))
+def parse_odpt_time(time_str: str | None, date_str: str) -> datetime | None:
+    """ODPTの時刻(HH:MM)と日付(YYYY-MM-DD)を合成してdatetimeに"""
+    if not time_str or not date_str:
+        return None
+    try:
+        return datetime.fromisoformat(f"{date_str}T{time_str}:00+09:00")
+    except ValueError:
+        return None
+
+
+def fmt_time(dt: datetime | None) -> str:
+    if not dt:
+        return "?"
+    return dt.astimezone(JST).strftime("%m/%d %H:%M")
+
+
+def in_monitoring_window(flight: dict, now: datetime) -> bool:
+    sched_dep = parse_schedule_time(flight.get("scheduled_departure", ""))
+    sched_arr = parse_schedule_time(flight.get("scheduled_arrival", ""))
     if not sched_dep:
         return False
-
-    dep_start = sched_dep - timedelta(minutes=DEP_WINDOW_BEFORE_MIN)
-    dep_end = sched_dep + timedelta(minutes=DEP_WINDOW_AFTER_MIN)
-    if dep_start <= now <= dep_end:
-        return True
-
-    if sched_arr:
-        arr_start = sched_arr - timedelta(minutes=ARR_WINDOW_BEFORE_MIN)
-        arr_end = sched_arr + timedelta(minutes=ARR_WINDOW_AFTER_MIN)
-        if arr_start <= now <= arr_end:
-            return True
-
-    return False
+    start = sched_dep - timedelta(minutes=PRE_WINDOW_MIN)
+    end = (sched_arr or sched_dep) + timedelta(minutes=POST_WINDOW_MIN)
+    return start <= now <= end
 
 
-def should_poll_api(flight: dict, prev: dict, now: datetime) -> bool:
-    """無料枠を守るため、重要時間帯かつ前回API呼び出しから十分空いた時だけ取得"""
-    if not in_active_window(flight, now):
-        return False
-
-    last_api_check = parse_iso(prev.get("last_api_check", ""))
-    if not last_api_check:
-        return True
-
-    return now - last_api_check >= timedelta(minutes=MIN_API_INTERVAL_MIN)
-
-
-def datetime_value(value: dict | str | None) -> str:
-    """AeroDataBoxのDateTimeContractからISO文字列を取り出す"""
-    if isinstance(value, dict):
-        return value.get("utc") or value.get("local") or ""
-    return value or ""
-
-
-def airport_value(airport: dict) -> dict:
-    """AeroDataBoxの空港情報を既存メッセージ形式へ寄せる"""
-    return {
-        "airport": airport.get("name") or "?",
-        "iata": airport.get("iata") or airport.get("icao") or "?",
-    }
-
-
-def normalize_status(status: str) -> str:
-    """AeroDataBoxのstatusを既存状態名へ正規化"""
-    status_map = {
-        "Expected": "scheduled",
-        "CheckIn": "scheduled",
-        "Boarding": "scheduled",
-        "GateClosed": "scheduled",
-        "Delayed": "scheduled",
-        "EnRoute": "active",
-        "Departed": "active",
-        "Approaching": "active",
-        "Arrived": "landed",
-        "Canceled": "cancelled",
-        "Cancelled": "cancelled",
-        "CanceledUncertain": "cancelled",
-        "CancelledUncertain": "cancelled",
-        "Diverted": "cancelled",
-    }
-    return status_map.get(status, "unknown")
-
-
-def normalize_flight(raw: dict) -> dict:
-    """AeroDataBoxレスポンスを既存ロジックが扱える形へ変換"""
-    dep = raw.get("departure") or {}
-    arr = raw.get("arrival") or {}
-
-    return {
-        "flight_status": normalize_status(raw.get("status", "")),
-        "source_status": raw.get("status", ""),
-        "airline": raw.get("airline") or {},
-        "departure": {
-            **airport_value(dep.get("airport") or {}),
-            "scheduled": datetime_value(dep.get("scheduledTime")),
-            "estimated": datetime_value(dep.get("revisedTime") or dep.get("predictedTime")),
-            "actual": datetime_value(dep.get("runwayTime")) if raw.get("status") in {"Departed", "EnRoute", "Arrived"} else "",
-        },
-        "arrival": {
-            **airport_value(arr.get("airport") or {}),
-            "scheduled": datetime_value(arr.get("scheduledTime")),
-            "estimated": datetime_value(arr.get("revisedTime") or arr.get("predictedTime")),
-            "actual": datetime_value(arr.get("runwayTime")) if raw.get("status") == "Arrived" else "",
-        },
-    }
-
-
-def fetch_flight(flight_iata: str, flight_date: str) -> dict | None:
-    """AeroDataBoxからフライト情報を取得"""
-    url = f"https://{AERODATABOX_HOST}/flights/number/{flight_iata}/{flight_date}"
-    headers = {
-        "X-RapidAPI-Key": AERODATABOX_API_KEY,
-        "X-RapidAPI-Host": AERODATABOX_HOST,
-        "Accept": "application/json",
-    }
+# ===== ODPT API =====
+def fetch_odpt(data_type: str, flight_number: str) -> dict | None:
+    """
+    ODPTからフライト情報を取得
+    data_type: "Departure" or "Arrival"
+    flight_number: "JL0006" 形式(4桁ゼロ埋め)
+    """
+    url = f"{ODPT_BASE}/odpt:FlightInformation{data_type}"
     params = {
-        "dateLocalRole": "Departure",
-        "withAircraftImage": "false",
-        "withLocation": "false",
-        "withFlightPlan": "false",
+        "odpt:operator": "odpt.Operator:JAL",
+        "odpt:flightNumber": flight_number,
+        "acl:consumerKey": ODPT_TOKEN,
     }
     try:
-        r = requests.get(url, headers=headers, params=params, timeout=20)
-        if r.status_code == 204:
-            print(f"[WARN] {flight_iata}: データなし", file=sys.stderr)
-            return None
-        try:
-            r.raise_for_status()
-        except requests.HTTPError as e:
-            print(
-                f"[WARN] {flight_iata}: APIエラー {r.status_code} {r.text or e}",
-                file=sys.stderr,
-            )
-            return None
+        r = requests.get(url, params=params, timeout=20)
+        r.raise_for_status()
         data = r.json()
     except Exception as e:
-        print(f"[WARN] {flight_iata}: API取得失敗 {e}", file=sys.stderr)
+        print(f"[WARN] ODPT {data_type} {flight_number}: {e}", file=sys.stderr)
         return None
 
-    if not isinstance(data, list) or not data:
+    if not data:
         return None
 
-    return normalize_flight(data[0])
+    # 複数日分返ることがあるので、最新のものを返す
+    if isinstance(data, list):
+        return data[0] if len(data) == 1 else max(data, key=lambda x: x.get("dc:date", ""))
+    return data
 
 
+def normalize_flight_number(iata: str) -> str:
+    """
+    JL6 -> JL0006, JL006 -> JL0006, JL0006 -> JL0006
+    ODPTは JL0006 形式(4桁ゼロ埋め)を使用
+    """
+    prefix = ""
+    num = ""
+    for i, c in enumerate(iata):
+        if c.isdigit():
+            prefix = iata[:i]
+            num = iata[i:]
+            break
+    if not prefix:
+        return iata
+    return f"{prefix}{num.zfill(4)}"
+
+
+# ===== LINE通知 =====
 def send_line(text: str) -> None:
-    """LINE Messaging APIでpush通知"""
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Content-Type": "application/json",
@@ -225,141 +175,167 @@ def send_line(text: str) -> None:
         if r.status_code != 200:
             print(f"[ERROR] LINE送信失敗: {r.status_code} {r.text}", file=sys.stderr)
         else:
-            print(f"[OK] LINE送信成功")
+            print("[OK] LINE送信成功")
     except Exception as e:
         print(f"[ERROR] LINE送信例外: {e}", file=sys.stderr)
 
 
-def format_time(iso_str: str) -> str:
-    """ISO時刻を見やすい形式に(JST想定)"""
-    dt = parse_iso(iso_str)
-    if not dt:
-        return "?"
-    # JST変換
-    jst = dt.astimezone(timezone(timedelta(hours=9)))
-    return jst.strftime("%m/%d %H:%M")
+# ===== メッセージ組み立て =====
+def build_message(
+    label: str,
+    flight_iata: str,
+    dep_info: dict | None,
+    arr_info: dict | None,
+    flight: dict,
+    extra: str = "",
+) -> str:
+    lines = [label, f"便名: {flight_iata}"]
 
+    # 出発情報
+    if dep_info:
+        dep_airport = dep_info.get("odpt:departureAirport", "").replace("odpt.Airport:", "")
+        dest_airport = dep_info.get("odpt:destinationAirport", "").replace("odpt.Airport:", "")
+        lines.append(f"区間: {dep_airport} → {dest_airport}")
 
-def build_message(label: str, flight_iata: str, info: dict, extra: str = "") -> str:
-    dep = info.get("departure") or {}
-    arr = info.get("arrival") or {}
-    airline = (info.get("airline") or {}).get("name", "")
+        date_str = dep_info.get("dc:date", "")[:10]
+        sched = parse_odpt_time(dep_info.get("odpt:scheduledTime"), date_str)
+        est = parse_odpt_time(dep_info.get("odpt:estimatedTime"), date_str)
+        actual = parse_odpt_time(dep_info.get("odpt:actualTime"), date_str)
 
-    lines = [
-        label,
-        f"便名: {flight_iata} ({airline})",
-        f"{dep.get('airport', '?')} ({dep.get('iata', '?')}) → {arr.get('airport', '?')} ({arr.get('iata', '?')})",
-    ]
-    # 出発時刻
-    dep_actual = dep.get("actual")
-    dep_estimated = dep.get("estimated")
-    dep_scheduled = dep.get("scheduled")
-    if dep_actual:
-        lines.append(f"出発実績: {format_time(dep_actual)}")
-    elif dep_estimated:
-        lines.append(f"出発見込み: {format_time(dep_estimated)} (定刻 {format_time(dep_scheduled)})")
-    else:
-        lines.append(f"出発予定: {format_time(dep_scheduled)}")
+        if actual:
+            lines.append(f"出発実績: {fmt_time(actual)}")
+        elif est:
+            lines.append(f"出発見込み: {fmt_time(est)} (定刻 {fmt_time(sched)})")
+        elif sched:
+            lines.append(f"出発予定: {fmt_time(sched)}")
 
-    # 到着時刻
-    arr_actual = arr.get("actual")
-    arr_estimated = arr.get("estimated")
-    arr_scheduled = arr.get("scheduled")
-    if arr_actual:
-        lines.append(f"到着実績: {format_time(arr_actual)}")
-    elif arr_estimated:
-        lines.append(f"到着見込み: {format_time(arr_estimated)} (定刻 {format_time(arr_scheduled)})")
-    else:
-        lines.append(f"到着予定: {format_time(arr_scheduled)}")
+        status = dep_info.get("odpt:flightStatus", "")
+        if status:
+            lines.append(f"状態: {STATUS_MAP.get(status, status)}")
+
+    # 到着情報
+    if arr_info:
+        date_str = arr_info.get("dc:date", "")[:10]
+        sched = parse_odpt_time(arr_info.get("odpt:scheduledTime"), date_str)
+        est = parse_odpt_time(arr_info.get("odpt:estimatedTime"), date_str)
+        actual = parse_odpt_time(arr_info.get("odpt:actualTime"), date_str)
+
+        if actual:
+            lines.append(f"到着実績: {fmt_time(actual)}")
+        elif est:
+            lines.append(f"到着見込み: {fmt_time(est)} (定刻 {fmt_time(sched)})")
+        elif sched:
+            lines.append(f"到着予定: {fmt_time(sched)}")
+
+        if not dep_info:
+            status = arr_info.get("odpt:flightStatus", "")
+            if status:
+                lines.append(f"状態: {STATUS_MAP.get(status, status)}")
 
     if extra:
         lines.append("")
         lines.append(extra)
+
+    # メモがあれば追加
+    note = flight.get("note", "")
+    if note:
+        lines.append(f"({note})")
+
     return "\n".join(lines)
 
 
-def calc_delay_min(scheduled: str, estimated: str) -> int:
-    """遅延分数を計算"""
-    s = parse_iso(scheduled)
-    e = parse_iso(estimated)
-    if not s or not e:
-        return 0
-    return int((e - s).total_seconds() / 60)
-
-
+# ===== 便ごとの処理 =====
 def process_flight(flight: dict, state: dict, now: datetime) -> None:
-    """1便分の処理"""
-    flight_iata = flight["flight_iata"]
+    flight_iata = flight["flight_number"]  # 例: JL6, JL006
     flight_date = flight.get("flight_date", "")
     key = f"{flight_iata}_{flight_date}"
 
-    # 既に最終状態(landed/cancelled)に到達済みならスキップ
+    if not in_monitoring_window(flight, now):
+        return
+
     prev = state.get(key, {})
     if prev.get("finalized"):
         print(f"[SKIP] {key}: 確定済み")
         return
 
-    # API無料枠節約のため、出発・到着の周辺だけ監視する
-    if not should_poll_api(flight, prev, now):
-        print(f"[SKIP] {key}: API呼び出し対象外")
+    # ODPT用の便名に正規化 (JL6 -> JL0006)
+    odpt_fn = normalize_flight_number(flight_iata)
+
+    # 出発情報・到着情報を取得
+    dep_info = fetch_odpt("Departure", odpt_fn)
+    arr_info = fetch_odpt("Arrival", odpt_fn)
+
+    if not dep_info and not arr_info:
+        print(f"[INFO] {key}: ODPT データなし(運航前 or 非運航日)")
         return
 
-    info = fetch_flight(flight_iata, flight_date)
-    if info is None:
-        return
-
-    new_status = info.get("flight_status")
-    old_status = prev.get("status")
-    print(f"[{key}] {old_status} -> {new_status}")
+    # --- 状態判定 ---
+    dep_status = (dep_info or {}).get("odpt:flightStatus", "")
+    arr_status = (arr_info or {}).get("odpt:flightStatus", "")
+    dep_actual = (dep_info or {}).get("odpt:actualTime")
+    arr_actual = (arr_info or {}).get("odpt:actualTime")
 
     notified = prev.get("notified", [])
-    dep = info.get("departure") or {}
-    arr = info.get("arrival") or {}
 
-    # 1. 欠航通知
-    if new_status == "cancelled" and "cancelled" not in notified:
-        send_line(build_message("❌ 欠航になりました", flight_iata, info))
+    print(f"[{key}] dep_status={dep_status} arr_status={arr_status} "
+          f"dep_actual={dep_actual} arr_actual={arr_actual}")
+
+    # 1. 欠航
+    if ("Cancelled" in dep_status or "Cancelled" in arr_status) and "cancelled" not in notified:
+        send_line(build_message("❌ 欠航になりました", flight_iata, dep_info, arr_info, flight))
         notified.append("cancelled")
         prev["finalized"] = True
 
-    # 2. 出発通知(activeを初検知した場合も通知)
-    if new_status == "active" and old_status != "active" and "departed" not in notified:
-        send_line(build_message("🛫 出発しました", flight_iata, info))
+    # 2. 出発済み(actualTimeが入った)
+    elif dep_actual and "departed" not in notified:
+        send_line(build_message("🛫 出発しました", flight_iata, dep_info, arr_info, flight))
         notified.append("departed")
 
-    # 3. 到着通知(active -> landed)
-    if new_status == "landed" and "landed" not in notified:
-        send_line(build_message("🛬 到着しました", flight_iata, info))
-        notified.append("landed")
+    # 3. 到着済み(actualTimeが入った)
+    if arr_actual and "arrived" not in notified:
+        send_line(build_message("🛬 到着しました", flight_iata, dep_info, arr_info, flight))
+        notified.append("arrived")
         prev["finalized"] = True
 
-    # 4. 大幅遅延通知(出発前のみ・1回まで)
-    if new_status == "scheduled" and "delay_warned" not in notified:
-        delay = calc_delay_min(dep.get("scheduled", ""), dep.get("estimated", ""))
-        if delay >= SIGNIFICANT_DELAY_MIN:
-            send_line(build_message(
-                f"⏰ 大幅遅延の見込み(+{delay}分)",
-                flight_iata, info,
-            ))
-            notified.append("delay_warned")
+    # 4. 引き返し・ダイバート
+    if "TurnedBack" in dep_status and "turnedback" not in notified:
+        send_line(build_message("↩️ 引き返しました", flight_iata, dep_info, arr_info, flight))
+        notified.append("turnedback")
+        prev["finalized"] = True
 
-    # 状態を保存
-    prev["status"] = new_status
+    if "Diverted" in arr_status and "diverted" not in notified:
+        send_line(build_message("↪️ 目的地が変更されました", flight_iata, dep_info, arr_info, flight))
+        notified.append("diverted")
+
+    # 5. 大幅遅延(出発前のみ・1回)
+    if "departed" not in notified and "delay_warned" not in notified and dep_info:
+        date_str = dep_info.get("dc:date", "")[:10]
+        sched = parse_odpt_time(dep_info.get("odpt:scheduledTime"), date_str)
+        est = parse_odpt_time(dep_info.get("odpt:estimatedTime"), date_str)
+        if sched and est:
+            delay_min = int((est - sched).total_seconds() / 60)
+            if delay_min >= SIGNIFICANT_DELAY_MIN:
+                send_line(build_message(
+                    f"⏰ 大幅遅延の見込み(+{delay_min}分)",
+                    flight_iata, dep_info, arr_info, flight,
+                ))
+                notified.append("delay_warned")
+
+    # 状態保存
     prev["notified"] = notified
-    prev["last_api_check"] = now.isoformat()
+    prev["dep_status"] = dep_status
+    prev["arr_status"] = arr_status
     prev["last_check"] = now.isoformat()
     state[key] = prev
 
 
 def cleanup_old_state(state: dict, now: datetime) -> dict:
-    """古い状態(7日以上前)を削除"""
     cutoff = now - timedelta(days=7)
-    cleaned = {}
-    for key, val in state.items():
-        last = parse_iso(val.get("last_check", ""))
-        if last and last >= cutoff:
-            cleaned[key] = val
-    return cleaned
+    return {
+        k: v for k, v in state.items()
+        if parse_schedule_time(v.get("last_check", "")) and
+        parse_schedule_time(v["last_check"]) >= cutoff
+    }
 
 
 def main() -> None:
@@ -372,12 +348,16 @@ def main() -> None:
     state = load_state()
     state = cleanup_old_state(state, now)
 
+    monitored = 0
     for flight in flights:
         try:
+            if in_monitoring_window(flight, now):
+                monitored += 1
             process_flight(flight, state, now)
         except Exception as e:
-            print(f"[ERROR] {flight.get('flight_iata')}: {e}", file=sys.stderr)
+            print(f"[ERROR] {flight.get('flight_number')}: {e}", file=sys.stderr)
 
+    print(f"監視対象: {monitored}件")
     save_state(state)
     print("=== 監視終了 ===")
 
