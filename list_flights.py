@@ -46,6 +46,7 @@ def build_message(rows: list[dict]) -> str:
 
 
 def send_line(text: str) -> None:
+    print(text)
     response = requests.post(
         "https://api.line.me/v2/bot/message/push",
         headers={
@@ -58,6 +59,7 @@ def send_line(text: str) -> None:
         },
         timeout=20,
     )
+    print(f"LINE response: {response.status_code} {response.text}")
     response.raise_for_status()
 
 
