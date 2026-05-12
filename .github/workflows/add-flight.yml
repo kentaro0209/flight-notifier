@@ -1,0 +1,54 @@
+name: Add Flight
+
+on:
+  workflow_dispatch:
+    inputs:
+      flight_number:
+        description: '便名。例: JL567'
+        required: true
+        type: string
+      flight_date:
+        description: '出発地の現地日付。例: 2026-05-20'
+        required: true
+        type: string
+
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Add flight to schedule
+        env:
+          ODPT_TOKEN: ${{ secrets.ODPT_TOKEN }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          FLIGHT_NUMBER: ${{ inputs.flight_number }}
+          FLIGHT_DATE: ${{ inputs.flight_date }}
+        run: python add_flight.py
+
+      - name: Commit schedule
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain schedule.csv)" ]; then
+            git add schedule.csv
+            git commit -m "Add flight ${{ inputs.flight_number }} ${{ inputs.flight_date }}"
+            git push
+          else
+            echo "No schedule changes"
+          fi

@@ -1,0 +1,175 @@
+"""Add a JAL flight to schedule.csv using ODPT flight information."""
+
+import csv
+import os
+import re
+import sys
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+import requests
+
+
+ODPT_TOKEN = os.environ["ODPT_TOKEN"]
+LINE_CHANNEL_TOKEN = os.environ.get("LINE_CHANNEL_TOKEN", "")
+LINE_USER_ID = os.environ.get("LINE_USER_ID", "")
+ODPT_BASE = "https://api.odpt.org/api/v4"
+JST = timezone(timedelta(hours=9))
+SCHEDULE_FILE = Path("schedule.csv")
+FIELDNAMES = [
+    "flight_number",
+    "flight_date",
+    "scheduled_departure",
+    "scheduled_arrival",
+    "note",
+]
+
+
+def normalize_input_flight_number(value: str) -> str:
+    value = value.strip().upper().replace(" ", "")
+    match = re.fullmatch(r"([A-Z]{2})(0*)(\d{1,4})", value)
+    if not match:
+        raise RuntimeError(f"便名の形式が正しくありません: {value}")
+    return f"{match.group(1)}{int(match.group(3))}"
+
+
+def normalize_odpt_flight_number(value: str) -> str:
+    match = re.fullmatch(r"([A-Z]{2})(\d{1,4})", value)
+    if not match:
+        return value
+    return f"{match.group(1)}{match.group(2).zfill(4)}"
+
+
+def parse_odpt_time(value: str | None, date: str) -> str:
+    if not value:
+        return ""
+    return datetime.fromisoformat(f"{date}T{value}:00+09:00").isoformat()
+
+
+def compact_airport(value: str) -> str:
+    return value.replace("odpt.Airport:", "") if value else "?"
+
+
+def fetch_odpt(data_type: str, odpt_flight_number: str) -> dict | None:
+    response = requests.get(
+        f"{ODPT_BASE}/odpt:FlightInformation{data_type}",
+        params={
+            "odpt:operator": "odpt.Operator:JAL",
+            "odpt:flightNumber": odpt_flight_number,
+            "acl:consumerKey": ODPT_TOKEN,
+        },
+        timeout=20,
+    )
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as e:
+        raise RuntimeError(f"ODPT API {response.status_code}: {response.text or e}") from e
+
+    data = response.json()
+    if not data:
+        return None
+    if isinstance(data, list):
+        return data[0] if len(data) == 1 else max(data, key=lambda row: row.get("dc:date", ""))
+    return data
+
+
+def load_rows() -> list[dict]:
+    if not SCHEDULE_FILE.exists():
+        return []
+    with SCHEDULE_FILE.open(encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def save_rows(rows: list[dict]) -> None:
+    with SCHEDULE_FILE.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def send_line(text: str) -> None:
+    if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
+        return
+    response = requests.post(
+        "https://api.line.me/v2/bot/message/push",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {LINE_CHANNEL_TOKEN}",
+        },
+        json={"to": LINE_USER_ID, "messages": [{"type": "text", "text": text}]},
+        timeout=20,
+    )
+    if response.status_code != 200:
+        print(f"[WARN] LINE送信失敗: {response.status_code} {response.text}", file=sys.stderr)
+
+
+def build_row(flight_number: str, flight_date: str, dep_info: dict, arr_info: dict | None) -> dict:
+    data_date = dep_info.get("dc:date", "")[:10] or flight_date
+    scheduled_departure = parse_odpt_time(dep_info.get("odpt:scheduledTime"), data_date)
+    if not scheduled_departure:
+        raise RuntimeError(f"{flight_number} の出発予定時刻がODPTから取得できませんでした")
+
+    arr_date = (arr_info or {}).get("dc:date", "")[:10] or data_date
+    scheduled_arrival = parse_odpt_time((arr_info or {}).get("odpt:scheduledTime"), arr_date)
+
+    dep_airport = compact_airport(dep_info.get("odpt:departureAirport", ""))
+    arr_airport = compact_airport(dep_info.get("odpt:destinationAirport", ""))
+    return {
+        "flight_number": flight_number,
+        "flight_date": flight_date,
+        "scheduled_departure": scheduled_departure,
+        "scheduled_arrival": scheduled_arrival,
+        "note": f"{dep_airport}→{arr_airport}",
+    }
+
+
+def upsert_row(rows: list[dict], new_row: dict) -> tuple[list[dict], str]:
+    key = (new_row["flight_number"], new_row["flight_date"])
+    result = []
+    updated = False
+    for row in rows:
+        row_key = (row.get("flight_number"), row.get("flight_date"))
+        if row_key == key:
+            result.append(new_row)
+            updated = True
+        else:
+            result.append({field: row.get(field, "") for field in FIELDNAMES})
+    if not updated:
+        result.append(new_row)
+    return result, "updated" if updated else "added"
+
+
+def main() -> None:
+    flight_number = normalize_input_flight_number(os.environ.get("FLIGHT_NUMBER", ""))
+    flight_date = os.environ.get("FLIGHT_DATE", "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", flight_date):
+        raise RuntimeError(f"日付の形式が正しくありません: {flight_date}")
+
+    odpt_flight_number = normalize_odpt_flight_number(flight_number)
+    dep_info = fetch_odpt("Departure", odpt_flight_number)
+    arr_info = fetch_odpt("Arrival", odpt_flight_number)
+    if not dep_info:
+        raise RuntimeError(f"{flight_number} の出発情報がODPTに見つかりませんでした")
+
+    row = build_row(flight_number, flight_date, dep_info, arr_info)
+    rows, action = upsert_row(load_rows(), row)
+    save_rows(rows)
+
+    print(f"{action}: {row}")
+    send_line(
+        "フライト予定を登録しました\n"
+        f"便名: {row['flight_number']}\n"
+        f"日付: {row['flight_date']}\n"
+        f"区間: {row['note']}\n"
+        f"出発: {row['scheduled_departure']}\n"
+        f"到着: {row['scheduled_arrival'] or '?'}"
+    )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        send_line(f"フライト予定の登録に失敗しました\n{e}")
+        raise SystemExit(1)

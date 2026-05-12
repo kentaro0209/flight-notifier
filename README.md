@@ -34,7 +34,15 @@ GitHub の **Settings → Secrets and variables → Actions** に以下を登録
 
 ## スケジュール登録
 
-`schedule.csv` にJAL便を登録します。
+LINEで以下のように送ると、ODPT APIから予定時刻と区間を取得して `schedule.csv` に登録します。
+
+```text
+追加 JL567 2026-05-20
+```
+
+登録後、GitHub Actions の **Add Flight** が実行され、成功/失敗がLINEに届きます。
+
+手動で編集する場合は、`schedule.csv` にJAL便を登録します。
 
 ```csv
 flight_number,flight_date,scheduled_departure,scheduled_arrival,note
@@ -56,7 +64,13 @@ GitHub Actions の **Flight Notifier** を開き、**Run workflow** で手動実
 
 ## 監視便の確認
 
-GitHub Actions の **List Flights** を開き、**Run workflow** で手動実行すると、現在 `schedule.csv` に登録されている監視便一覧がLINEに届きます。
+LINEで以下のように送ると、現在 `schedule.csv` に登録されている監視便一覧が届きます。
+
+```text
+一覧
+```
+
+GitHub Actions の **List Flights** を開き、**Run workflow** で手動実行しても同じ一覧を送信できます。
 
 ## 通知内容
 
