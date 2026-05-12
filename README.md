@@ -54,6 +54,10 @@ JL515,2026-05-20,2026-05-20T08:00:00+09:00,2026-05-20T09:30:00+09:00,羽田→�
 
 GitHub Actions の **Flight Notifier** を開き、**Run workflow** で手動実行します。`ODPT_TOKEN` 登録前はODPT API取得ができないため、トークン登録後に確認してください。
 
+## 監視便の確認
+
+GitHub Actions の **List Flights** を開き、**Run workflow** で手動実行すると、現在 `schedule.csv` に登録されている監視便一覧がLINEに届きます。
+
 ## 通知内容
 
 | イベント | 条件 |
