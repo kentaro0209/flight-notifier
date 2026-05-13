@@ -1,10 +1,11 @@
 """Add a JAL flight to schedule.csv using ODPT flight information."""
 
 import csv
+from html.parser import HTMLParser
 import os
 import re
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -23,6 +24,17 @@ FIELDNAMES = [
     "scheduled_arrival",
     "note",
 ]
+
+
+class TextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if text:
+            self.parts.append(text)
 
 
 def normalize_input_flight_number(value: str) -> str:
@@ -56,6 +68,77 @@ def parse_manual_time(value: str, date: str) -> str:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
     except ValueError as e:
         raise RuntimeError(f"時刻の形式が正しくありません: {value}") from e
+
+
+def parse_date(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def parse_effective_range(block: str) -> tuple[date | None, date | None]:
+    through = re.search(r"Effective\s+(\d{4}-\d{2}-\d{2})\s+through\s+(\d{4}-\d{2}-\d{2})", block)
+    if through:
+        return parse_date(through.group(1)), parse_date(through.group(2))
+
+    until = re.search(r"Valid until\s+(\d{4}-\d{2}-\d{2})", block)
+    if until:
+        return None, parse_date(until.group(1))
+
+    from_match = re.search(r"Effective from\s+(\d{4}-\d{2}-\d{2})", block)
+    if from_match:
+        return parse_date(from_match.group(1)), None
+
+    return None, None
+
+
+def in_effective_range(target: date, start: date | None, end: date | None) -> bool:
+    return (start is None or start <= target) and (end is None or target <= end)
+
+
+def strip_tags(html: str) -> list[str]:
+    parser = TextExtractor()
+    parser.feed(html)
+    return parser.parts
+
+
+def fetch_flightmapper_row(flight_number: str, flight_date: str) -> dict | None:
+    match = re.fullmatch(r"([A-Z]{2})(\d{1,4})", flight_number)
+    if not match:
+        return None
+
+    airline = "JAL" if match.group(1) == "JL" else match.group(1)
+    url = f"https://info.flightmapper.net/flight/{airline}_{match.group(1)}_{int(match.group(2))}"
+    response = requests.get(url, timeout=20)
+    response.raise_for_status()
+    text = "\n".join(strip_tags(response.text))
+    target = parse_date(flight_date)
+
+    for block in text.split(f"{airline} {match.group(1)}{int(match.group(2))}")[1:]:
+        start, end = parse_effective_range(block)
+        if not in_effective_range(target, start, end):
+            continue
+
+        times = re.findall(r"\b\d{2}:\d{2}\b", block)
+        airports = re.findall(r"([A-Za-z ]+ \(([A-Z]{3})\))", block)
+        if len(times) < 2 or len(airports) < 2:
+            continue
+
+        dep_time, arr_time = times[0], times[1]
+        dep_dt = datetime.fromisoformat(f"{flight_date}T{dep_time}:00+09:00")
+        arr_dt = datetime.fromisoformat(f"{flight_date}T{arr_time}:00+09:00")
+        if arr_dt <= dep_dt:
+            arr_dt += timedelta(days=1)
+
+        dep_code = airports[0][1]
+        arr_code = airports[1][1]
+        return {
+            "flight_number": flight_number,
+            "flight_date": flight_date,
+            "scheduled_departure": dep_dt.isoformat(),
+            "scheduled_arrival": arr_dt.isoformat(),
+            "note": f"{dep_code}→{arr_code}",
+        }
+
+    return None
 
 
 def compact_airport(value: str) -> str:
@@ -190,13 +273,17 @@ def main() -> None:
         if manual_note:
             row["note"] = manual_note
     else:
-        row = build_manual_row(
-            flight_number,
-            flight_date,
-            manual_departure,
-            manual_arrival,
-            manual_note,
-        )
+        row = fetch_flightmapper_row(flight_number, flight_date)
+        if row and manual_note:
+            row["note"] = manual_note
+        if not row:
+            row = build_manual_row(
+                flight_number,
+                flight_date,
+                manual_departure,
+                manual_arrival,
+                manual_note,
+            )
     rows, action = upsert_row(load_rows(), row)
     save_rows(rows)
 
