@@ -29,12 +29,20 @@ def load_rows() -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def sort_key(row: dict) -> tuple[str, str, str]:
+    return (
+        row.get("flight_date", ""),
+        row.get("scheduled_departure", ""),
+        row.get("flight_number", ""),
+    )
+
+
 def build_message(rows: list[dict]) -> str:
     if not rows:
         return "登録中の監視便はありません。"
 
     lines = ["登録中の監視便"]
-    for row in rows:
+    for row in sorted(rows, key=sort_key):
         lines.append(
             "\n"
             f"{row.get('flight_date', '?')} {row.get('flight_number', '?')}\n"
