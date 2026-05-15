@@ -2,7 +2,7 @@
 
 import csv
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -11,6 +11,7 @@ import requests
 SCHEDULE_FILE = Path("schedule.csv")
 LINE_CHANNEL_TOKEN = os.environ["LINE_CHANNEL_TOKEN"]
 LINE_USER_ID = os.environ["LINE_USER_ID"]
+JST = timezone(timedelta(hours=9))
 
 
 def format_time(value: str) -> str:
@@ -37,12 +38,18 @@ def sort_key(row: dict) -> tuple[str, str, str]:
     )
 
 
+def is_upcoming(row: dict) -> bool:
+    today = datetime.now(JST).date().isoformat()
+    return row.get("flight_date", "") >= today
+
+
 def build_message(rows: list[dict]) -> str:
-    if not rows:
+    upcoming_rows = [row for row in rows if is_upcoming(row)]
+    if not upcoming_rows:
         return "登録中の監視便はありません。"
 
     lines = ["登録中の監視便"]
-    for row in sorted(rows, key=sort_key):
+    for row in sorted(upcoming_rows, key=sort_key):
         lines.append(
             "\n"
             f"{row.get('flight_date', '?')} {row.get('flight_number', '?')}\n"

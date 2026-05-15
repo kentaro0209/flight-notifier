@@ -109,6 +109,7 @@ function buildScheduleMessage_() {
   }
 
   const header = rows[0];
+  const today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
   const items = rows.slice(1)
     .filter(row => row.length && row[0])
     .map(row => {
@@ -116,11 +117,16 @@ function buildScheduleMessage_() {
       header.forEach((key, index) => item[key] = row[index] || '');
       return item;
     })
+    .filter(item => (item.flight_date || '') >= today)
     .sort((a, b) => (
       `${a.flight_date || ''} ${a.scheduled_departure || ''} ${a.flight_number || ''}`
     ).localeCompare(
       `${b.flight_date || ''} ${b.scheduled_departure || ''} ${b.flight_number || ''}`
     ));
+
+  if (!items.length) {
+    return '登録中の監視便はありません。';
+  }
 
   const lines = ['登録中の監視便'];
   for (const item of items) {
