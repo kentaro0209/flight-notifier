@@ -15,8 +15,8 @@
 const REPO_OWNER = 'kentaro0209';
 const REPO_NAME = 'flight-notifier';
 const ADD_WORKFLOW_FILE = 'add-flight.yml';
-const LIST_WORKFLOW_FILE = 'list-flights.yml';
 const REF = 'main';
+const SCHEDULE_CSV_URL = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REF}/schedule.csv`;
 
 function doGet() {
   return okResponse_({ ok: true, app: 'flight-notifier-line-webhook' });
@@ -35,8 +35,7 @@ function doPost(e) {
     const text = event.message.text.trim();
     if (text === '一覧') {
       try {
-        dispatchWorkflow_(LIST_WORKFLOW_FILE, {});
-        replyLine_(event.replyToken, '監視便一覧を送信します');
+        replyLine_(event.replyToken, buildScheduleMessage_());
       } catch (error) {
         console.error(error);
         replyLine_(event.replyToken, `一覧取得に失敗しました\n${error.message}`);
@@ -95,6 +94,55 @@ function parseFlightMessage_(text) {
     scheduled_arrival: values[3] || '',
     note: values.slice(4).join(' '),
   };
+}
+
+function buildScheduleMessage_() {
+  const response = UrlFetchApp.fetch(SCHEDULE_CSV_URL, { muteHttpExceptions: true });
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error(`schedule.csv取得失敗: ${status}`);
+  }
+
+  const rows = Utilities.parseCsv(response.getContentText());
+  if (rows.length <= 1) {
+    return '登録中の監視便はありません。';
+  }
+
+  const header = rows[0];
+  const items = rows.slice(1)
+    .filter(row => row.length && row[0])
+    .map(row => {
+      const item = {};
+      header.forEach((key, index) => item[key] = row[index] || '');
+      return item;
+    })
+    .sort((a, b) => (
+      `${a.flight_date || ''} ${a.scheduled_departure || ''} ${a.flight_number || ''}`
+    ).localeCompare(
+      `${b.flight_date || ''} ${b.scheduled_departure || ''} ${b.flight_number || ''}`
+    ));
+
+  const lines = ['登録中の監視便'];
+  for (const item of items) {
+    lines.push(
+      `\n${item.flight_date || '?'} ${item.flight_number || '?'}\n` +
+      `${item.note || ''}\n` +
+      `出発: ${formatScheduleTime_(item.scheduled_departure)}\n` +
+      `到着: ${formatScheduleTime_(item.scheduled_arrival)}`
+    );
+  }
+  return lines.join('\n');
+}
+
+function formatScheduleTime_(value) {
+  if (!value) {
+    return '?';
+  }
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) {
+    return value;
+  }
+  return `${match[2]}/${match[3]} ${match[4]}:${match[5]}`;
 }
 
 function dispatchWorkflow_(workflowFile, inputs) {
