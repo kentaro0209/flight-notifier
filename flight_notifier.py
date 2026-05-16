@@ -35,6 +35,9 @@ PRE_WINDOW_MIN = 30
 POST_WINDOW_MIN = 180
 # 大幅遅延とみなす閾値(分)
 SIGNIFICANT_DELAY_MIN = 30
+# 監視開始・データなしをLINEに出して、システムが黙らないようにする
+NOTIFY_MONITOR_START = True
+NOTIFY_NO_DATA_ONCE = True
 
 # ODPT flightStatus の日本語マッピング
 STATUS_MAP = {
@@ -258,6 +261,18 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
         print(f"[SKIP] {key}: 確定済み")
         return
 
+    notified = prev.get("notified", [])
+    if NOTIFY_MONITOR_START and "monitoring_started" not in notified:
+        send_line(
+            "監視を開始しました\n"
+            f"便名: {flight_iata}\n"
+            f"日付: {flight_date}\n"
+            f"予定: {fmt_time(parse_schedule_time(flight.get('scheduled_departure', '')))}"
+            f" → {fmt_time(parse_schedule_time(flight.get('scheduled_arrival', '')))}\n"
+            f"({flight.get('note', '')})"
+        )
+        notified.append("monitoring_started")
+
     # ODPT用の便名に正規化 (JL6 -> JL0006)
     odpt_fn = normalize_flight_number(flight_iata)
 
@@ -267,6 +282,17 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
 
     if not dep_info and not arr_info:
         print(f"[INFO] {key}: ODPT データなし(運航前 or 非運航日)")
+        if NOTIFY_NO_DATA_ONCE and "no_data" not in notified:
+            send_line(
+                "ODPTデータがまだ見つかりません\n"
+                f"便名: {flight_iata}\n"
+                f"日付: {flight_date}\n"
+                "監視は継続します。"
+            )
+            notified.append("no_data")
+            prev["notified"] = notified
+            prev["last_check"] = now.isoformat()
+            state[key] = prev
         return
 
     # --- 状態判定 ---
@@ -274,8 +300,6 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
     arr_status = (arr_info or {}).get("odpt:flightStatus", "")
     dep_actual = (dep_info or {}).get("odpt:actualTime")
     arr_actual = (arr_info or {}).get("odpt:actualTime")
-
-    notified = prev.get("notified", [])
 
     print(f"[{key}] dep_status={dep_status} arr_status={arr_status} "
           f"dep_actual={dep_actual} arr_actual={arr_actual}")
