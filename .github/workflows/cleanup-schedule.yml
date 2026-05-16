@@ -1,0 +1,39 @@
+name: Cleanup Schedule
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 毎日 JST 03:20
+    - cron: '20 18 * * *'
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cleanup schedule
+        run: python cleanup_schedule.py
+
+      - name: Commit schedule
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain schedule.csv)" ]; then
+            git add schedule.csv
+            git commit -m "Cleanup past flights"
+            git push
+          else
+            echo "No schedule changes"
+          fi

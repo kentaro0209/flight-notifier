@@ -15,6 +15,7 @@
 const REPO_OWNER = 'kentaro0209';
 const REPO_NAME = 'flight-notifier';
 const ADD_WORKFLOW_FILE = 'add-flight.yml';
+const CLEANUP_WORKFLOW_FILE = 'cleanup-schedule.yml';
 const REF = 'main';
 const SCHEDULE_CSV_URL = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REF}/schedule.csv`;
 
@@ -35,6 +36,7 @@ function doPost(e) {
     const text = event.message.text.trim();
     if (text === '一覧') {
       try {
+        dispatchWorkflow_(CLEANUP_WORKFLOW_FILE, {});
         replyLine_(event.replyToken, buildScheduleMessage_());
       } catch (error) {
         console.error(error);
