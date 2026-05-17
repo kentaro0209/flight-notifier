@@ -1,1 +1,9 @@
-{}
+{
+  "JL567_2026-05-17": {
+    "notified": [
+      "monitoring_started",
+      "no_data"
+    ],
+    "last_check": "2026-05-17T04:20:20.739874+00:00"
+  }
+}
