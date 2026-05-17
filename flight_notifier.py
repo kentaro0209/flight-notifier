@@ -300,6 +300,7 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
     arr_status = (arr_info or {}).get("odpt:flightStatus", "")
     dep_actual = (dep_info or {}).get("odpt:actualTime")
     arr_actual = (arr_info or {}).get("odpt:actualTime")
+    arrived_detected = bool(arr_actual) or "Arrived" in dep_status or "Arrived" in arr_status
 
     print(f"[{key}] dep_status={dep_status} arr_status={arr_status} "
           f"dep_actual={dep_actual} arr_actual={arr_actual}")
@@ -315,8 +316,8 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
         send_line(build_message("🛫 出発しました", flight_iata, dep_info, arr_info, flight))
         notified.append("departed")
 
-    # 3. 到着済み(actualTimeが入った)
-    if arr_actual and "arrived" not in notified:
+    # 3. 到着済み(actualTimeまたはArrivedステータスが入った)
+    if arrived_detected and "arrived" not in notified:
         send_line(build_message("🛬 到着しました", flight_iata, dep_info, arr_info, flight))
         notified.append("arrived")
         prev["finalized"] = True
