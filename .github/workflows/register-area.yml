@@ -1,0 +1,55 @@
+name: Register Area
+
+on:
+  workflow_dispatch:
+    inputs:
+      discord_user_id:
+        description: 'DiscordユーザーID'
+        required: true
+        type: string
+      postal_code:
+        description: '7桁の郵便番号。例: 1130034'
+        required: true
+        type: string
+
+concurrency:
+  group: register-area
+  cancel-in-progress: false
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Register area
+        env:
+          DISCORD_USER_ID: ${{ inputs.discord_user_id }}
+          POSTAL_CODE: ${{ inputs.postal_code }}
+        run: python register_area.py
+
+      - name: Commit user settings
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain data/users.json)" ]; then
+            git add data/users.json
+            git commit -m "Register area for Discord user ${{ inputs.discord_user_id }}"
+            git push
+          else
+            echo "No user setting changes"
+          fi

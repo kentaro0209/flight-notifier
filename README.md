@@ -78,6 +78,53 @@ LINEで以下のように送ると、現在 `schedule.csv` に登録されてい
 
 GitHub Actions の **List Flights** を開き、**Run workflow** で手動実行しても同じ一覧を送信できます。
 
+## Discord地域登録
+
+Discordで以下のように送ると、郵便番号からZipCloud APIで住所を取得し、`data/users.json` に自宅周辺の検索地域を登録します。
+
+```text
+/register 1130034
+```
+
+登録される内容は次の形式です。
+
+```json
+{
+  "discord_user_id": {
+    "postal_code": "1130034",
+    "prefecture": "東京都",
+    "city": "文京区",
+    "town": "湯島",
+    "area_keywords": ["文京区", "湯島", "本郷", "御茶ノ水"],
+    "child_keywords": ["子ども", "親子", "小学生", "未就学児"],
+    "notify_time": "08:00"
+  }
+}
+```
+
+Discord botを動かす場合は、`DISCORD_TOKEN` を環境変数に設定して起動します。
+
+```bash
+pip install -r requirements.txt
+python discord_bot.py
+```
+
+GitHub Actions の **Register Area** を手動実行しても、`discord_user_id` と `postal_code` から同じ登録処理を実行できます。
+
+## Discord定期通知
+
+GitHub Actions が毎日08:00 JSTにDiscordチャンネルへ通知します。PCでBotを常時起動する必要はありません。
+
+通知先チャンネルで **チャンネル設定 → 連携サービス → ウェブフック** からWebhook URLを作成し、GitHub Secrets に以下を登録します。
+
+| Name | Value |
+|------|-------|
+| `DISCORD_WEBHOOK_URL` | DiscordチャンネルのWebhook URL |
+
+通知は `.github/workflows/daily-area-notifier.yml` が毎日08:00 JSTに起動し、登録済みユーザーへ送ります。同じユーザーには1日1回だけ送信し、送信済み状態は `area_notify_state.json` に保存されます。
+
+手動で動作確認する場合は、GitHub Actions の **Daily Area Notifier** を開き、**Run workflow** で `force_notify` に `true` を入れて実行します。
+
 ## 通知内容
 
 | イベント | 条件 |
