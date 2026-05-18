@@ -18,7 +18,7 @@
       "monitoring_started"
     ],
     "dep_status": "",
-    "arr_status": "",
-    "last_check": "2026-05-18T17:14:00.154430+00:00"
+    "arr_status": "odpt.FlightStatus:EstimatedArrival",
+    "last_check": "2026-05-18T19:05:34.959724+00:00"
   }
 }
