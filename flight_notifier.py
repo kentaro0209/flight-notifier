@@ -145,10 +145,10 @@ def fetch_odpt(data_type: str, flight_number: str) -> dict | None:
     return data
 
 
-def normalize_flight_number(iata: str) -> str:
+def flight_number_candidates(iata: str) -> list[str]:
     """
-    JL6 -> JL0006, JL006 -> JL0006, JL0006 -> JL0006
-    ODPTは JL0006 形式(4桁ゼロ埋め)を使用
+    ODPT側の便名形式ゆれに備えて複数候補を試す。
+    例: JL567 -> JL0567 / JL567
     """
     prefix = ""
     num = ""
@@ -158,8 +158,28 @@ def normalize_flight_number(iata: str) -> str:
             num = iata[i:]
             break
     if not prefix:
-        return iata
-    return f"{prefix}{num.zfill(4)}"
+        return [iata]
+
+    raw = f"{prefix}{int(num)}"
+    padded4 = f"{prefix}{num.zfill(4)}"
+    padded3 = f"{prefix}{num.zfill(3)}"
+    candidates = [padded4, raw, padded3]
+
+    result = []
+    for candidate in candidates:
+        if candidate not in result:
+            result.append(candidate)
+    return result
+
+
+def fetch_odpt_any(data_type: str, flight_numbers: list[str]) -> dict | None:
+    for flight_number in flight_numbers:
+        info = fetch_odpt(data_type, flight_number)
+        if info:
+            print(f"[OK] ODPT {data_type}: {flight_number}")
+            return info
+        print(f"[INFO] ODPT {data_type}: {flight_number} データなし")
+    return None
 
 
 # ===== LINE通知 =====
@@ -273,12 +293,12 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
         )
         notified.append("monitoring_started")
 
-    # ODPT用の便名に正規化 (JL6 -> JL0006)
-    odpt_fn = normalize_flight_number(flight_iata)
+    # ODPT側の便名形式ゆれに備えて複数形式で試す
+    odpt_candidates = flight_number_candidates(flight_iata)
 
     # 出発情報・到着情報を取得
-    dep_info = fetch_odpt("Departure", odpt_fn)
-    arr_info = fetch_odpt("Arrival", odpt_fn)
+    dep_info = fetch_odpt_any("Departure", odpt_candidates)
+    arr_info = fetch_odpt_any("Arrival", odpt_candidates)
 
     if not dep_info and not arr_info:
         print(f"[INFO] {key}: ODPT データなし(運航前 or 非運航日)")
