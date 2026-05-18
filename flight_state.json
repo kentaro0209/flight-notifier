@@ -12,5 +12,13 @@
       "no_data"
     ],
     "last_check": "2026-05-18T06:05:31.668648+00:00"
+  },
+  "JL5_2026-05-18": {
+    "notified": [
+      "monitoring_started"
+    ],
+    "dep_status": "",
+    "arr_status": "",
+    "last_check": "2026-05-18T17:14:00.154430+00:00"
   }
 }
