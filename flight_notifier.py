@@ -342,6 +342,22 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
         notified.append("arrived")
         prev["finalized"] = True
 
+    # 3.5 到着予定時刻を過ぎたが、ODPT実績がまだない場合の予告
+    sched_arrival = parse_schedule_time(flight.get("scheduled_arrival", ""))
+    if (
+        sched_arrival
+        and now >= sched_arrival
+        and "arrival_due" not in notified
+        and "arrived" not in notified
+    ):
+        send_line(
+            "到着予定時刻を過ぎました\n"
+            f"便名: {flight_iata}\n"
+            f"予定: {fmt_time(sched_arrival)}\n"
+            "ODPT実績を確認中です。"
+        )
+        notified.append("arrival_due")
+
     # 4. 引き返し・ダイバート
     if "TurnedBack" in dep_status and "turnedback" not in notified:
         send_line(build_message("↩️ 引き返しました", flight_iata, dep_info, arr_info, flight))
