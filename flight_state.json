@@ -23,10 +23,12 @@
   },
   "JL567_2026-05-19": {
     "notified": [
-      "monitoring_started"
+      "monitoring_started",
+      "arrived"
     ],
-    "dep_status": "odpt.FlightStatus:InAir",
-    "arr_status": "odpt.FlightStatus:EstimatedArrival",
-    "last_check": "2026-05-19T04:36:54.840206+00:00"
+    "dep_status": "odpt.FlightStatus:Departed",
+    "arr_status": "odpt.FlightStatus:Arrived",
+    "last_check": "2026-05-19T08:05:23.966760+00:00",
+    "finalized": true
   }
 }
