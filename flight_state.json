@@ -35,8 +35,16 @@
     "notified": [
       "monitoring_started"
     ],
+    "dep_status": "odpt.FlightStatus:EstimatedDeparture",
+    "arr_status": "",
+    "last_check": "2026-05-20T01:35:23.525687+00:00"
+  },
+  "JL516_2026-05-20": {
+    "notified": [
+      "monitoring_started"
+    ],
     "dep_status": "",
     "arr_status": "",
-    "last_check": "2026-05-19T23:38:01.449819+00:00"
+    "last_check": "2026-05-20T01:35:23.525687+00:00"
   }
 }
