@@ -267,6 +267,29 @@ def build_message(
     return "\n".join(lines)
 
 
+def notify_arrival_due_if_needed(
+    flight_iata: str,
+    flight: dict,
+    notified: list[str],
+    now: datetime,
+) -> None:
+    """予定到着時刻を過ぎても実績が未確定なら、確認中通知を1回だけ送る。"""
+    sched_arrival = parse_schedule_time(flight.get("scheduled_arrival", ""))
+    if (
+        sched_arrival
+        and now >= sched_arrival
+        and "arrival_due" not in notified
+        and "arrival_actual" not in notified
+    ):
+        send_line(
+            "到着予定時刻を過ぎました\n"
+            f"便名: {flight_iata}\n"
+            f"予定: {fmt_time(sched_arrival)}\n"
+            "ODPT実績を確認中です。"
+        )
+        notified.append("arrival_due")
+
+
 # ===== 便ごとの処理 =====
 def process_flight(flight: dict, state: dict, now: datetime) -> None:
     flight_iata = flight["flight_number"]  # 例: JL6, JL006
@@ -277,11 +300,11 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
         return
 
     prev = state.get(key, {})
-    if prev.get("finalized"):
+    notified = prev.get("notified", [])
+    if prev.get("finalized") and "arrival_actual" in notified:
         print(f"[SKIP] {key}: 確定済み")
         return
 
-    notified = prev.get("notified", [])
     if NOTIFY_MONITOR_START and "monitoring_started" not in notified:
         send_line(
             "監視を開始しました\n"
@@ -302,6 +325,7 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
 
     if not dep_info and not arr_info:
         print(f"[INFO] {key}: ODPT データなし(運航前 or 非運航日)")
+        notify_arrival_due_if_needed(flight_iata, flight, notified, now)
         if NOTIFY_NO_DATA_ONCE and "no_data" not in notified:
             send_line(
                 "ODPTデータがまだ見つかりません\n"
@@ -310,9 +334,9 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
                 "監視は継続します。"
             )
             notified.append("no_data")
-            prev["notified"] = notified
-            prev["last_check"] = now.isoformat()
-            state[key] = prev
+        prev["notified"] = notified
+        prev["last_check"] = now.isoformat()
+        state[key] = prev
         return
 
     # --- 状態判定 ---
@@ -336,27 +360,21 @@ def process_flight(flight: dict, state: dict, now: datetime) -> None:
         send_line(build_message("🛫 出発しました", flight_iata, dep_info, arr_info, flight))
         notified.append("departed")
 
-    # 3. 到着済み(actualTimeまたはArrivedステータスが入った)
-    if arrived_detected and "arrived" not in notified:
+    # 3. 到着済み。ステータスだけの到着では確定扱いにせず、actualTimeを後追い通知する。
+    if arr_actual and "arrival_actual" not in notified:
+        label = "🛬 到着実績が確定しました" if "arrived" in notified else "🛬 到着しました"
+        send_line(build_message(label, flight_iata, dep_info, arr_info, flight))
+        if "arrived" not in notified:
+            notified.append("arrived")
+        notified.append("arrival_actual")
+        prev["finalized"] = True
+    elif arrived_detected and "arrived" not in notified:
         send_line(build_message("🛬 到着しました", flight_iata, dep_info, arr_info, flight))
         notified.append("arrived")
-        prev["finalized"] = True
 
     # 3.5 到着予定時刻を過ぎたが、ODPT実績がまだない場合の予告
-    sched_arrival = parse_schedule_time(flight.get("scheduled_arrival", ""))
-    if (
-        sched_arrival
-        and now >= sched_arrival
-        and "arrival_due" not in notified
-        and "arrived" not in notified
-    ):
-        send_line(
-            "到着予定時刻を過ぎました\n"
-            f"便名: {flight_iata}\n"
-            f"予定: {fmt_time(sched_arrival)}\n"
-            "ODPT実績を確認中です。"
-        )
-        notified.append("arrival_due")
+    if not arrived_detected:
+        notify_arrival_due_if_needed(flight_iata, flight, notified, now)
 
     # 4. 引き返し・ダイバート
     if "TurnedBack" in dep_status and "turnedback" not in notified:
