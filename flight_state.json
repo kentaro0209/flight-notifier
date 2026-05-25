@@ -1,12 +1,4 @@
 {
-  "JL5_2026-05-18": {
-    "notified": [
-      "monitoring_started"
-    ],
-    "dep_status": "",
-    "arr_status": "odpt.FlightStatus:EstimatedArrival",
-    "last_check": "2026-05-18T19:05:34.959724+00:00"
-  },
   "JL567_2026-05-19": {
     "notified": [
       "monitoring_started",
