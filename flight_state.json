@@ -1,1 +1,11 @@
-{}
+{
+  "JL567_2026-06-29": {
+    "notified": [
+      "monitoring_started",
+      "arrived"
+    ],
+    "dep_status": "odpt.FlightStatus:Departed",
+    "arr_status": "odpt.FlightStatus:Arrived",
+    "last_check": "2026-06-29T06:42:21.463906+00:00"
+  }
+}
